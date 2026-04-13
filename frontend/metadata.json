@@ -1,5 +1,0 @@
-{
-  "name": "OrthoSurg PJI Advisor",
-  "description": "Công cụ hỗ trợ quyết định lâm sàng cho bác sĩ phẫu thuật chỉnh hình để chẩn đoán và điều trị Nhiễm trùng khớp nhân tạo (PJI) sử dụng hướng dẫn ICM 2018 và phác đồ kháng sinh dựa trên RAG.",
-  "requestFramePermissions": []
-}
