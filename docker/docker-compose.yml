@@ -287,145 +287,11 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
+  #Prometheus Loki Granfana Jaeger === 'SigNoz' <- All in One
 
-  # MONITORING - OpenTelemetry Collector
-  # thu thập traces, metrics, logs rồi fan-out
-  otel-collector:
-    image: otel/opentelemetry-collector:0.142.0
-    container_name: pji-otel-collector
-    restart: unless-stopped
-    command: [ "--config=/etc/otel/config.yml" ]
-    volumes:
-      - ./docker/otelcollector/config.yml:/etc/otel/config.yml:ro
-    expose:
-      - "4317" # gRPC receiver (cho các services gửi data vào)
-      - "4318" # HTTP receiver
-      - "8889" # Prometheus metrics endpoint (cho Prometheus scrape)
-    networks:
-      - monitoring-net
-    healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133" ]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.5'
-
-  # MONITORING - Jaeger (Distributed Tracing)
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: pji-jaeger
-    restart: unless-stopped
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-    ports:
-      # Jaeger UI - restrict access trong production
-      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
-    networks:
-      - monitoring-net
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '1.0'
-
-  # MONITORING - Prometheus (Metrics)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: pji-prometheus
-    restart: unless-stopped
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle' # Cho phép reload config qua API
-    volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./docker/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
-      - prometheus_data:/prometheus
-    networks:
-      - monitoring-net
-    healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '1.0'
-
-  # MONITORING - Loki (Log Aggregation)
-  loki:
-    image: grafana/loki:latest
-    container_name: pji-loki
-    restart: unless-stopped
-    command: -config.file=/etc/loki/config.yaml
-    volumes:
-      - ./docker/logging/loki-config.yml:/etc/loki/config.yaml:ro
-      - loki_data:/loki
-    networks:
-      - monitoring-net
-    healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready" ]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '1.0'
-
-  # MONITORING - Promtail (Log shipper → Loki)
-  # Thu logs từ tất cả containers gửi về Loki
-  promtail:
-    image: grafana/promtail:latest
-    container_name: pji-promtail
-    restart: unless-stopped
-    volumes:
-      - ./docker/logging/promtail-config.yml:/etc/promtail/config.yaml:ro
-      - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    networks:
-      - monitoring-net
-    depends_on:
-      - loki
-
-  # MONITORING - Grafana (Dashboard & Visualization)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: pji-grafana
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Grafana password required}
-      GF_SERVER_ROOT_URL: https://${DOMAIN:-localhost}/grafana
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./docker/monitoring/grafana-config.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-    networks:
-      - monitoring-net
-      - frontend-net # Caddy proxy vào Grafana UI
-    healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health" ]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.5'
-
-# =============================================================================
-# NETWORKS - Phân tách để tăng security
-# =============================================================================
+  # =============================================================================
+  # NETWORKS - Phân tách để tăng security
+  # =============================================================================
 networks:
   # Frontend: Caddy ↔ Frontend SPA ↔ Backend API ↔ Grafana UI
   frontend-net:
@@ -437,10 +303,6 @@ networks:
 
   # RAG: RAG Service ↔ RabbitMQ
   rag-net:
-    driver: bridge
-
-  # Monitoring: OTel Collector ↔ Jaeger ↔ Prometheus ↔ Loki ↔ Grafana
-  monitoring-net:
     driver: bridge
 
 # VOLUMES - Persistent data

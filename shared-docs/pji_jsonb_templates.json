@@ -81,63 +81,111 @@
       ]
     },
     "lab_results": {
-      "_note": "Lấy kết quả xét nghiệm gần nhất",
+      "_note": "Lấy kết quả xét nghiệm gần nhất - map theo model LabResult.java (hematology_tests, fluid_analysis, biochemical_data đều là JSONB)",
       "lab_id": 4001,
-      "esr": {
-        "value": "18.0",
-        "unit": "mm/h"
-      },
-      "wbc_blood": {
-        "value": "12.5",
-        "unit": "x10^9/L"
-      },
-      "neut": {
-        "value": "78.5",
-        "unit": "%"
-      },
-      "mono": {
-        "value": 8.2,
-        "unit": "%"
-      },
-      "crp": {
-        "value": 95.3,
-        "unit": "mg/L"
-      },
-      "d_dimer": {
-        "value": 1.85,
-        "unit": "mg/L FEU"
-      },
-      "serum_il6": {
-        "value": 45.2,
-        "unit": "pg/mL"
-      },
-      "alpha_defensin": {
-        "value": "POSITIVE"
-      },
-      "rbc": {
-        "value": 4.25,
-        "unit": "x10^12/L"
-      },
-      "ig": {
-        "value": 0.5,
-        "unit": "%"
-      },
-      "mcv": {
-        "value": 88.0,
-        "unit": "fL"
-      },
-      "mch": {
-        "value": 30.5,
-        "unit": "pg"
-      },
-      "synovial_wbc": {
-        "value": 52000,
-        "unit": "cells/μL"
-      },
-      "synovial_pmn": {
-        "value": 92.0,
-        "unit": "%"
-      },
+      "episode_id": 1001,
+      "hematology_tests": [
+        {
+          "id": "esr",
+          "name": "ESR - Tốc độ máu lắng",
+          "value": 85,
+          "unit": "mm/h",
+          "normalRange": "0-20"
+        },
+        {
+          "id": "wbc_blood",
+          "name": "WBC - Bạch cầu máu",
+          "value": 12.5,
+          "unit": "x10^9/L",
+          "normalRange": "4.0-10.0"
+        },
+        {
+          "id": "neut",
+          "name": "Neutrophil - Bạch cầu trung tính",
+          "value": 78.5,
+          "unit": "%",
+          "normalRange": "45-75"
+        },
+        {
+          "id": "mono",
+          "name": "Monocyte - Bạch cầu mono",
+          "value": 8.2,
+          "unit": "%",
+          "normalRange": "2-10"
+        },
+        {
+          "id": "crp",
+          "name": "CRP - C-Reactive Protein",
+          "value": 95.3,
+          "unit": "mg/L",
+          "normalRange": "<10"
+        },
+        {
+          "id": "d_dimer",
+          "name": "D-Dimer",
+          "value": 1.85,
+          "unit": "mg/L FEU",
+          "normalRange": "<0.86"
+        },
+        {
+          "id": "serum_il6",
+          "name": "Serum IL-6",
+          "value": 45.2,
+          "unit": "pg/mL",
+          "normalRange": "<10"
+        },
+        {
+          "id": "rbc",
+          "name": "RBC - Hồng cầu",
+          "value": 4.25,
+          "unit": "x10^12/L",
+          "normalRange": "4.0-5.5"
+        },
+        {
+          "id": "ig",
+          "name": "IG - Immature Granulocytes",
+          "value": 0.5,
+          "unit": "%",
+          "normalRange": "<0.5"
+        },
+        {
+          "id": "mcv",
+          "name": "MCV - Thể tích trung bình hồng cầu",
+          "value": 88.0,
+          "unit": "fL",
+          "normalRange": "80-100"
+        },
+        {
+          "id": "mch",
+          "name": "MCH - Lượng Hemoglobin trung bình",
+          "value": 30.5,
+          "unit": "pg",
+          "normalRange": "27-33"
+        }
+      ],
+      "fluid_analysis": [
+        {
+          "id": "synovial_wbc",
+          "name": "Synovial WBC - Bạch cầu dịch khớp",
+          "value": 52000,
+          "unit": "cells/μL",
+          "normalRange": "<3000"
+        },
+        {
+          "id": "synovial_pmn",
+          "name": "Synovial PMN% - Tỷ lệ bạch cầu đa nhân trung tính dịch khớp",
+          "value": 92.0,
+          "unit": "%",
+          "normalRange": "<80"
+        },
+        {
+          "id": "alpha_defensin",
+          "name": "Alpha-Defensin dịch khớp",
+          "value": "POSITIVE",
+          "unit": null,
+          "normalRange": "NEGATIVE"
+        }
+      ],
       "biochemical_data": {
         "glucose": {
           "value": 8.5,
@@ -152,8 +200,8 @@
           "unit": "μmol/L"
         },
         "eGFR": {
-          "unit": "mL/min/1.73m2",
-          "value": 95
+          "value": 95,
+          "unit": "mL/min/1.73m2"
         },
         "alt": {
           "value": 28,
