@@ -5,6 +5,32 @@
 #   docker compose logs -f       # Xem logs
 #   docker compose down          # Dừng tất cả
 
+x-clickhouse-defaults: &clickhouse-defaults
+  image: clickhouse/clickhouse-server:24.1.2-alpine
+  restart: on-failure
+  tty: true
+  logging:
+    options:
+      max-size: 50m
+      max-file: "3"
+  healthcheck:
+    test: [ "CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping" ]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  ulimits:
+    nproc: 65535
+    nofile:
+      soft: 262144
+      hard: 262144
+
+x-signoz-db-depend: &signoz-db-depend
+  depends_on:
+    clickhouse:
+      condition: service_healthy
+    otel-collector-migrator-sync:
+      condition: service_completed_successfully
+
 services:
   # REVERSE PROXY - Caddy
   # Entry point duy nhất, tự động SSL via Let's Encrypt
@@ -175,6 +201,121 @@ services:
           memory: 4G # RAG + embeddings cần nhiều RAM
           cpus: '4.0'
 
+  # =============================================================================
+  # EXTRACT IMAGES - FastAPI extractor + RabbitMQ worker
+  # =============================================================================
+  pji-extract-api:
+    image: ${DOCKERHUB_REPO:-local}/pji-extract-api:${IMAGE_TAG:-latest}
+    container_name: pji-extract-api
+    restart: unless-stopped
+    command: uvicorn extractor.api.app:app --host 0.0.0.0 --port 8000
+    expose:
+      - "8000"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-pji_user}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ password required}
+      RABBITMQ_QUEUE: ${EXTRACT_QUEUE:-image_processing}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: pji-extract-api
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend-net
+      - rag-net
+      - monitoring-net
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  pji-extract-worker:
+    image: ${DOCKERHUB_REPO:-local}/pji-extract-worker:${IMAGE_TAG:-latest}
+    container_name: pji-extract-worker
+    restart: unless-stopped
+    command: python -m extractor.worker.consumer
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-pji_user}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ password required}
+      RABBITMQ_QUEUE: ${EXTRACT_QUEUE:-image_processing}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: pji-extract-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend-net
+      - rag-net
+      - monitoring-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  # =============================================================================
+  # VOICE INTERACTION - Gateway + Orchestrator
+  # NOTE: images must be pre-built and pushed to ${DOCKERHUB_REPO}.
+  # Use docker-buildlocal.yml to build them — it handles voice-base automatically.
+  # =============================================================================
+  pji-voice-gateway:
+    image: ${DOCKERHUB_REPO:-local}/pji-voice-gateway:${IMAGE_TAG:-latest}
+    container_name: pji-voice-gateway
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      ASR_API_KEY: ${ASR_API_KEY:?ASR API key required}
+      TTS_API_KEY: ${TTS_API_KEY:?TTS API key required}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: pji-voice-gateway
+    depends_on:
+      - pji-voice-orchestrator
+    networks:
+      - backend-net
+      - rag-net
+      - monitoring-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+  pji-voice-orchestrator:
+    image: ${DOCKERHUB_REPO:-local}/pji-voice-orchestrator:${IMAGE_TAG:-latest}
+    container_name: pji-voice-orchestrator
+    restart: unless-stopped
+    expose:
+      - "8001"
+    environment:
+      ASR_API_KEY: ${ASR_API_KEY:?ASR API key required}
+      TTS_API_KEY: ${TTS_API_KEY:?TTS API key required}
+      CHATBOT_API_KEY: ${CHATBOT_API_KEY:?Chatbot API key required}
+      CHATBOT_BASE_URL: ${CHATBOT_BASE_URL:-https://openrouter.ai/api/v1}
+      CHATBOT_MODEL: ${CHATBOT_MODEL:-google/gemini-2.0-flash-001}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: pji-voice-orchestrator
+    networks:
+      - backend-net
+      - rag-net
+      - monitoring-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
   # DATABASE - PostgreSQL
   postgres:
     image: postgres:16-alpine
@@ -287,13 +428,171 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
-  #Prometheus Loki Granfana Jaeger === 'SigNoz' <- All in One
+  # =============================================================================
+  # OBSERVABILITY - SigNoz (All-in-One: replaces Prometheus / Loki / Grafana / Jaeger)
+  # =============================================================================
+  zookeeper-1:
+    image: zookeeper:3.9.5
+    container_name: signoz-zookeeper-1
+    hostname: zookeeper-1
+    user: root
+    restart: unless-stopped
+    volumes:
+      - signoz_zookeeper_data:/data
+    environment:
+      - ZOO_MY_ID=1
+      - ZOO_AUTOPURGE_PURGEINTERVAL=1
+      - ZOO_4LW_COMMANDS_WHITELIST=mntr,conf,ruok
+    networks:
+      - monitoring-net
+
+  clickhouse:
+    <<: *clickhouse-defaults
+    container_name: signoz-clickhouse
+    hostname: clickhouse
+    depends_on:
+      - zookeeper-1
+    volumes:
+      - ./signoz/clickhouse-config.xml:/etc/clickhouse-server/config.xml
+      - ./signoz/clickhouse-users.xml:/etc/clickhouse-server/users.xml
+      - ./signoz/custom-function.xml:/etc/clickhouse-server/custom-function.xml
+      - ./signoz/clickhouse-cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./signoz/user_scripts:/var/lib/clickhouse/user_scripts/
+      - signoz_clickhouse_data:/var/lib/clickhouse/
+    networks:
+      - monitoring-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+
+  otel-collector-migrator-sync:
+    image: signoz/signoz-schema-migrator:${OTELCOL_TAG:-0.111.16}
+    container_name: signoz-otel-migrator-sync
+    command: [ "sync", "--dsn=tcp://clickhouse:9000", "--up=" ]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - monitoring-net
+
+  otel-collector-migrator-async:
+    image: signoz/signoz-schema-migrator:${OTELCOL_TAG:-0.111.16}
+    container_name: signoz-otel-migrator-async
+    command: [ "async", "--dsn=tcp://clickhouse:9000", "--up=" ]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      otel-collector-migrator-sync:
+        condition: service_completed_successfully
+    networks:
+      - monitoring-net
+
+  alertmanager:
+    image: signoz/alertmanager:${ALERTMANAGER_TAG:-0.23.7}
+    container_name: signoz-alertmanager
+    restart: unless-stopped
+    command:
+      - --queryService.url=http://query-service:8085
+      - --storage.path=/data
+    volumes:
+      - signoz_alertmanager_data:/data
+    depends_on:
+      query-service:
+        condition: service_healthy
+    networks:
+      - monitoring-net
+
+  query-service:
+    image: signoz/query-service:${SIGNOZ_TAG:-0.64.0}
+    container_name: signoz-query-service
+    restart: unless-stopped
+    command:
+      - "-config=/root/config/prometheus.yml"
+      - "--use-logs-new-schema=true"
+      - "--use-trace-new-schema=true"
+    volumes:
+      - ./signoz/prometheus.yml:/root/config/prometheus.yml
+      - signoz_data:/var/lib/signoz/
+    environment:
+      - ClickHouseUrl=tcp://clickhouse:9000
+      - ALERTMANAGER_API_PREFIX=http://alertmanager:9093/api/
+      - SIGNOZ_LOCAL_DB_PATH=/var/lib/signoz/signoz.db
+      - DASHBOARDS_PATH=/root/config/dashboards
+      - STORAGE=clickhouse
+      - GODEBUG=netdns=go
+      - TELEMETRY_ENABLED=true
+      - DEPLOYMENT_TYPE=docker-standalone-amd
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "localhost:8080/api/v1/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - monitoring-net
+    <<: *signoz-db-depend
+
+  signoz-frontend:
+    image: signoz/frontend:${SIGNOZ_TAG:-0.64.0}
+    container_name: signoz-frontend
+    restart: unless-stopped
+    depends_on:
+      - alertmanager
+      - query-service
+    # SigNoz UI - bind to localhost; expose externally via Caddy if needed
+    ports:
+      - "127.0.0.1:${SIGNOZ_UI_PORT:-3301}:3301"
+    networks:
+      - monitoring-net
+
+  otel-collector:
+    image: signoz/signoz-otel-collector:${OTELCOL_TAG:-0.111.16}
+    container_name: signoz-otel-collector
+    hostname: otel-collector
+    restart: unless-stopped
+    user: root
+    command:
+      - "--config=/etc/otel-collector-config.yaml"
+      - "--manager-config=/etc/manager-config.yaml"
+      - "--copy-path=/var/tmp/collector-config.yaml"
+      - "--feature-gates=-pkg.translator.prometheus.NormalizeName"
+    volumes:
+      - ./signoz/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./signoz/otel-collector-opamp-config.yaml:/etc/manager-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /:/hostfs:ro
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux
+      - LOW_CARDINAL_EXCEPTION_GROUPING=false
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      otel-collector-migrator-sync:
+        condition: service_completed_successfully
+      query-service:
+        condition: service_healthy
+    networks:
+      - monitoring-net
+
+  logspout:
+    image: gliderlabs/logspout:v3.2.14
+    container_name: signoz-logspout
+    restart: unless-stopped
+    command: syslog+tcp://otel-collector:2255
+    volumes:
+      - /etc/hostname:/etc/host_hostname:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - otel-collector
+    networks:
+      - monitoring-net
 
   # =============================================================================
   # NETWORKS - Phân tách để tăng security
   # =============================================================================
 networks:
-  # Frontend: Caddy ↔ Frontend SPA ↔ Backend API ↔ Grafana UI
+  # Frontend: Caddy ↔ Frontend SPA ↔ Backend API
   frontend-net:
     driver: bridge
 
@@ -305,6 +604,10 @@ networks:
   rag-net:
     driver: bridge
 
+  # Monitoring: SigNoz stack ↔ Backend / RAG service (telemetry export)
+  monitoring-net:
+    driver: bridge
+
 # VOLUMES - Persistent data
 volumes:
   caddy_data:
@@ -314,6 +617,7 @@ volumes:
   rabbitmq_data:
   minio_data:
   rag_data:
-  prometheus_data:
-  loki_data:
-  grafana_data:
+  signoz_zookeeper_data:
+  signoz_clickhouse_data:
+  signoz_alertmanager_data:
+  signoz_data:

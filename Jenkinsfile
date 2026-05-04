@@ -12,7 +12,7 @@ pipeline {
     }
 
     environment {
-        RAG_SERVICE_DIR = 'Medical_RAG_PJI_latest'
+        RAG_SERVICE_DIR = 'Rag_Agentic'
         DOCKER_BUILDKIT = '1'
     }
 
