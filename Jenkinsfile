@@ -325,13 +325,15 @@ pipeline {
                     sed -i '/^  pji_caddy_config:$/,/^    external: true$/d' "${DEPLOY_PATH}/docker-compose.yml"
 
                     cd "${DEPLOY_PATH}"
+                    # Pull only the images we build/push ourselves (the rest are public images
+                    # like postgres:16-alpine, redis:7-alpine, signoz/*, etc. — compose pulls
+                    # them automatically on first `up`).
                     DOCKERHUB_REPO="${DOCKERHUB_REPO}" IMAGE_TAG="${IMAGE_TAG}" \
                       docker compose pull pji-backend pji-frontend pji-rag-service pji-extract-api pji-extract-worker caddy
+                    # Bring up the full stack including SigNoz (zookeeper, clickhouse, otel-collector,
+                    # query-service, signoz-frontend, alertmanager, logspout).
                     DOCKERHUB_REPO="${DOCKERHUB_REPO}" IMAGE_TAG="${IMAGE_TAG}" \
-                      docker compose up -d --remove-orphans \
-                        postgres redis rabbitmq minio \
-                        pji-backend pji-rag-service pji-extract-api pji-extract-worker \
-                        pji-frontend caddy
+                      docker compose up -d --remove-orphans
                 '''
             }
         }
