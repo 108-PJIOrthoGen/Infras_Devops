@@ -14,11 +14,21 @@ pipeline {
     }
 
     environment {
+        // Component checkout dirs (siblings of the Infras_Devops content at workspace root)
         BACKEND_DIR  = 'Backend_Server'
         FRONTEND_DIR = 'Frontend_Client'
         RAG_DIR      = 'Rag_Agentic'
         EXTRACT_DIR  = 'Extract_Images'
         DOCKER_BUILDKIT = '1'
+        // Mirror params -> env so shell steps can read them on the FIRST build (before
+        // Jenkins has registered the new parameters block). Elvis (?:) supplies defaults.
+        BACKEND_REPO_URL  = "${params.BACKEND_REPO_URL  ?: 'https://github.com/108-PJIOrthoGen/Backend_Server.git'}"
+        FRONTEND_REPO_URL = "${params.FRONTEND_REPO_URL ?: 'https://github.com/108-PJIOrthoGen/Frontend_Client.git'}"
+        RAG_REPO_URL      = "${params.RAG_REPO_URL      ?: 'https://github.com/108-PJIOrthoGen/Rag_Agentic.git'}"
+        EXTRACT_REPO_URL  = "${params.EXTRACT_REPO_URL  ?: 'https://github.com/108-PJIOrthoGen/Extract_Images.git'}"
+        COMPONENT_BRANCH  = "${params.COMPONENT_BRANCH  ?: 'main'}"
+        DOCKERHUB_REPO    = "${params.DOCKERHUB_REPO    ?: 'hieupahmet'}"
+        DEPLOY_PATH       = "${params.DEPLOY_PATH       ?: '/opt/pji-advisor'}"
     }
 
     triggers {
