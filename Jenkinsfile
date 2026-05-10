@@ -297,17 +297,6 @@ pipeline {
             }
         }
 
-        stage('Approve Production Deploy') {
-            when {
-                expression { return params.DEPLOY }
-            }
-            steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    input message: "Deploy build ${env.IMAGE_TAG} to production?", ok: 'Deploy'
-                }
-            }
-        }
-
         stage('Deploy') {
             when {
                 expression { return params.DEPLOY }
