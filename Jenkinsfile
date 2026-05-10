@@ -9,6 +9,7 @@ pipeline {
         string(name: 'RAG_REPO_URL',      defaultValue: 'https://github.com/108-PJIOrthoGen/Rag_Agentic.git',     trim: true, description: 'Git URL for the RAG service')
         string(name: 'EXTRACT_REPO_URL',  defaultValue: 'https://github.com/108-PJIOrthoGen/Extract_Images.git',  trim: true, description: 'Git URL for Extract Images')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/pji-advisor', trim: true, description: 'Local directory on the Jenkins host where docker compose runs')
+        booleanParam(name: 'RUN_TESTS', defaultValue: false, description: 'Run unit tests (skip for now until test infrastructure is in place)')
         booleanParam(name: 'RUN_SONAR', defaultValue: false, description: 'Run SonarQube analysis')
         booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Deploy locally after pushing images (Jenkins must run on the same host as the docker daemon)')
     }
@@ -109,6 +110,9 @@ pipeline {
         }
 
         stage('Test') {
+            when {
+                expression { return params.RUN_TESTS }
+            }
             parallel {
                 stage('Backend') {
                     steps {
