@@ -299,10 +299,7 @@ pipeline {
 
         stage('Approve Production Deploy') {
             when {
-                allOf {
-                    expression { return params.DEPLOY }
-                    branch 'main'
-                }
+                expression { return params.DEPLOY }
             }
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
@@ -313,10 +310,7 @@ pipeline {
 
         stage('Deploy') {
             when {
-                allOf {
-                    expression { return params.DEPLOY }
-                    branch 'main'
-                }
+                expression { return params.DEPLOY }
             }
             steps {
                 sh '''
@@ -351,10 +345,7 @@ pipeline {
 
         stage('Smoke Test') {
             when {
-                allOf {
-                    expression { return params.DEPLOY }
-                    branch 'main'
-                }
+                expression { return params.DEPLOY }
             }
             steps {
                 sh '''
