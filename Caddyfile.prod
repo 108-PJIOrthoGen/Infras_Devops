@@ -1,0 +1,88 @@
+# Production Caddyfile for Cloudflare Tunnel deployment.
+# Cloudflare terminates TLS at the edge; Caddy speaks plain HTTP on :80
+# and never tries Let's Encrypt against this private-IP host.
+
+{
+	# No auto-HTTPS — Cloudflare handles TLS at the edge.
+	auto_https off
+
+	# Email kept for completeness; not used since auto_https is off.
+	email {$ACME_EMAIL:admin@example.com}
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}
+
+:80 {
+	# Cloudflare always sends the right Host header; we accept any.
+
+	header {
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "SAMEORIGIN"
+		X-XSS-Protection          "1; mode=block"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		Permissions-Policy        "camera=(), microphone=(), geolocation=()"
+
+		# Tell browsers we're served over HTTPS even though Caddy speaks HTTP
+		# (Cloudflare upgraded the request).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+		-Server
+		-X-Powered-By
+	}
+
+	log {
+		output stdout
+		format json
+		level INFO
+	}
+
+	# API: /api/* → Spring Boot
+	handle /api/* {
+		reverse_proxy pji-backend:8085 {
+			health_uri      /actuator/health
+			health_interval 15s
+			health_timeout  5s
+			health_status   200
+
+			transport http {
+				dial_timeout            5s
+				response_header_timeout 120s
+				read_timeout            120s
+			}
+
+			# Trust Cloudflare's forwarded headers; pass through to backend.
+			header_up X-Real-IP          {http.request.header.CF-Connecting-IP}
+			header_up X-Forwarded-For    {http.request.header.CF-Connecting-IP}
+			header_up X-Forwarded-Proto  https
+			header_up X-Forwarded-Host   {host}
+		}
+	}
+
+	# WebSocket: /ws/* → Backend
+	handle /ws/* {
+		reverse_proxy pji-backend:8085 {
+			transport http {
+				dial_timeout            5s
+				response_header_timeout 0
+			}
+		}
+	}
+
+	# Frontend SPA
+	handle {
+		reverse_proxy pji-frontend:3000 {
+			health_uri      /healthz
+			health_interval 30s
+			health_timeout  5s
+		}
+	}
+
+	encode {
+		gzip
+		zstd
+	}
+}

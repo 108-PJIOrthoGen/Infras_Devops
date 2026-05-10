@@ -69,9 +69,9 @@
 
 			# Timeout cho request
 			transport http {
-				dial_timeout     5s
-				response_timeout 120s    # RAG queries có thể mất lâu
-				read_timeout     120s
+				dial_timeout            5s
+				response_header_timeout 120s    # RAG queries có thể mất lâu
+				read_timeout            120s
 			}
 
 			# Headers cho backend biết request gốc
@@ -88,8 +88,8 @@
 		reverse_proxy pji-backend:8085 {
 			transport http {
 				# WebSocket cần timeout dài hơn
-				dial_timeout     5s
-				response_timeout 0    # Không timeout cho WebSocket
+				dial_timeout            5s
+				response_header_timeout 0    # Không timeout cho WebSocket
 			}
 		}
 	}

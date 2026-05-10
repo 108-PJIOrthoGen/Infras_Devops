@@ -3,17 +3,28 @@ pipeline {
 
     parameters {
         string(name: 'DOCKERHUB_REPO', defaultValue: 'hieupahmet', trim: true, description: 'Docker Hub repository namespace')
-        string(name: 'RAG_REPO_URL', defaultValue: 'https://github.com/HieuPahm-R2/Medical_RAG_PJI_latest.git', trim: true, description: 'Git URL for the RAG service repository')
-        string(name: 'DEPLOY_HOST', defaultValue: '', trim: true, description: 'Production VPS hostname or IP')
-        string(name: 'DEPLOY_USER', defaultValue: 'root', trim: true, description: 'SSH user for deployment')
-        string(name: 'DEPLOY_PATH', defaultValue: '/opt/pji-advisor', trim: true, description: 'Remote directory containing docker-compose.yml')
+        string(name: 'COMPONENT_BRANCH', defaultValue: 'main', trim: true, description: 'Branch to checkout for every component repo')
+        string(name: 'BACKEND_REPO_URL',  defaultValue: 'https://github.com/108-PJIOrthoGen/Backend_Server.git',  trim: true, description: 'Git URL for the Spring backend')
+        string(name: 'FRONTEND_REPO_URL', defaultValue: 'https://github.com/108-PJIOrthoGen/Frontend_Client.git', trim: true, description: 'Git URL for the React frontend')
+        string(name: 'RAG_REPO_URL',      defaultValue: 'https://github.com/108-PJIOrthoGen/Rag_Agentic.git',     trim: true, description: 'Git URL for the RAG service')
+        string(name: 'EXTRACT_REPO_URL',  defaultValue: 'https://github.com/108-PJIOrthoGen/Extract_Images.git',  trim: true, description: 'Git URL for Extract Images')
+        string(name: 'DEPLOY_PATH', defaultValue: '/opt/pji-advisor', trim: true, description: 'Local directory on the Jenkins host where docker compose runs')
         booleanParam(name: 'RUN_SONAR', defaultValue: false, description: 'Run SonarQube analysis')
-        booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Deploy after pushing images')
+        booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Deploy locally after pushing images (Jenkins must run on the same host as the docker daemon)')
     }
 
     environment {
-        RAG_SERVICE_DIR = 'Rag_Agentic'
+        BACKEND_DIR  = 'Backend_Server'
+        FRONTEND_DIR = 'Frontend_Client'
+        RAG_DIR      = 'Rag_Agentic'
+        EXTRACT_DIR  = 'Extract_Images'
         DOCKER_BUILDKIT = '1'
+    }
+
+    triggers {
+        // Poll the SCM (Infras_Devops) every 5 minutes. Component repos must be triggered
+        // separately if you want auto-rebuild on every code push — see README for options.
+        pollSCM('H/5 * * * *')
     }
 
     options {
@@ -26,31 +37,63 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                // checkout scm pulls Infras_Devops at workspace root (Caddyfile, Caddyfile.prod,
+                // docker/, Jenkinsfile etc. are siblings of Backend_Server/, Frontend_Client/, ...)
                 checkout scm
                 script {
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.SAFE_BRANCH = (env.BRANCH_NAME ?: 'manual').replaceAll('[^A-Za-z0-9_.-]', '-')
-                    env.IMAGE_TAG = "${env.SAFE_BRANCH}-${env.BUILD_NUMBER}"
+                    env.IMAGE_TAG = "${env.SAFE_BRANCH}-${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
                 }
-                sh '''
-                    if [ ! -d "${RAG_SERVICE_DIR}/.git" ]; then
-                      git clone --depth 1 "${RAG_REPO_URL}" "${RAG_SERVICE_DIR}"
-                    fi
-                '''
+
+                // Clone the four component repos as siblings of Infras_Devops content.
+                // Use the github-pat credential so private org repos are accessible.
+                withCredentials([usernamePassword(credentialsId: 'github-pat', usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        set -eu
+                        clone_or_pull() {
+                          local url="$1" dir="$2" branch="$3"
+                          # Inject token into HTTPS URL (works for private org repos)
+                          local auth_url="$(echo "$url" | sed -E "s|https://|https://${GH_USER}:${GH_TOKEN}@|")"
+                          if [ -d "$dir/.git" ]; then
+                            echo "[refresh] $dir"
+                            git -C "$dir" remote set-url origin "$auth_url"
+                            git -C "$dir" fetch --depth 1 origin "$branch"
+                            git -C "$dir" reset --hard "origin/$branch"
+                          else
+                            echo "[clone] $dir from $url"
+                            git clone --depth 1 --branch "$branch" "$auth_url" "$dir"
+                          fi
+                          # Scrub token back out so logs/inspectors don't leak it
+                          git -C "$dir" remote set-url origin "$url"
+                        }
+                        clone_or_pull "${BACKEND_REPO_URL}"  "${BACKEND_DIR}"  "${COMPONENT_BRANCH}"
+                        clone_or_pull "${FRONTEND_REPO_URL}" "${FRONTEND_DIR}" "${COMPONENT_BRANCH}"
+                        clone_or_pull "${RAG_REPO_URL}"      "${RAG_DIR}"      "${COMPONENT_BRANCH}"
+                        clone_or_pull "${EXTRACT_REPO_URL}"  "${EXTRACT_DIR}"  "${COMPONENT_BRANCH}"
+                    '''
+                }
             }
         }
 
         stage('Validate Layout') {
             steps {
                 sh '''
-                    test -f backend/pom.xml
-                    test -f backend/Dockerfile
-                    test -f frontend/package.json
-                    test -f frontend/Dockerfile
-                    test -f docker-compose.yml
+                    # Infras_Devops content lives at workspace root after `checkout scm`
                     test -f Caddyfile
-                    test -f "${RAG_SERVICE_DIR}/pyproject.toml"
-                    test -f "${RAG_SERVICE_DIR}/Dockerfile"
+                    test -f Caddyfile.prod
+                    test -f docker/docker-compose.yml
+                    test -d docker/signoz
+                    # Component repos cloned by the Checkout stage above
+                    test -f "${BACKEND_DIR}/pom.xml"
+                    test -f "${BACKEND_DIR}/Dockerfile"
+                    test -f "${FRONTEND_DIR}/package.json"
+                    test -f "${FRONTEND_DIR}/Dockerfile"
+                    test -f "${FRONTEND_DIR}/nginx.conf"
+                    test -f "${RAG_DIR}/pyproject.toml"
+                    test -f "${RAG_DIR}/Dockerfile"
+                    test -f "${EXTRACT_DIR}/pyproject.toml"
+                    test -f "${EXTRACT_DIR}/Dockerfile"
                 '''
             }
         }
@@ -59,20 +102,20 @@ pipeline {
             parallel {
                 stage('Backend') {
                     steps {
-                        dir('backend') {
+                        dir("${env.BACKEND_DIR}") {
                             sh './mvnw -B test -Dspring.profiles.active=test'
                         }
                     }
                     post {
                         always {
-                            junit testResults: 'backend/target/surefire-reports/*.xml', allowEmptyResults: true
+                            junit testResults: "${env.BACKEND_DIR}/target/surefire-reports/*.xml", allowEmptyResults: true
                         }
                     }
                 }
 
                 stage('Frontend') {
                     steps {
-                        dir('frontend') {
+                        dir("${env.FRONTEND_DIR}") {
                             sh '''
                                 npm ci
                                 npm run build
@@ -83,7 +126,7 @@ pipeline {
 
                 stage('RAG Service') {
                     steps {
-                        dir("${env.RAG_SERVICE_DIR}") {
+                        dir("${env.RAG_DIR}") {
                             sh '''
                                 python3 -m pip install --upgrade pip uv
                                 uv sync --frozen --dev
@@ -93,7 +136,24 @@ pipeline {
                     }
                     post {
                         always {
-                            junit testResults: "${env.RAG_SERVICE_DIR}/test-results.xml", allowEmptyResults: true
+                            junit testResults: "${env.RAG_DIR}/test-results.xml", allowEmptyResults: true
+                        }
+                    }
+                }
+
+                stage('Extract Images') {
+                    steps {
+                        dir("${env.EXTRACT_DIR}") {
+                            sh '''
+                                python3 -m pip install --upgrade pip uv
+                                uv sync --frozen --dev
+                                uv run pytest --junitxml=test-results.xml -v || true
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            junit testResults: "${env.EXTRACT_DIR}/test-results.xml", allowEmptyResults: true
                         }
                     }
                 }
@@ -106,10 +166,10 @@ pipeline {
             }
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    dir('backend') {
+                    dir("${env.BACKEND_DIR}") {
                         sh './mvnw -B sonar:sonar -Dsonar.projectKey=pji-backend -Dsonar.projectName="PJI Backend"'
                     }
-                    dir('frontend') {
+                    dir("${env.FRONTEND_DIR}") {
                         sh '''
                             npm ci
                             npx sonar-scanner \
@@ -118,7 +178,7 @@ pipeline {
                               -Dsonar.sources=src
                         '''
                     }
-                    dir("${env.RAG_SERVICE_DIR}") {
+                    dir("${env.RAG_DIR}") {
                         sh '''
                             npx sonar-scanner \
                               -Dsonar.projectKey=pji-rag-service \
@@ -146,7 +206,7 @@ pipeline {
             parallel {
                 stage('Backend Image') {
                     steps {
-                        dir('backend') {
+                        dir("${env.BACKEND_DIR}") {
                             sh """
                                 docker build \
                                   -t ${params.DOCKERHUB_REPO}/pji-backend:${env.IMAGE_TAG} \
@@ -159,9 +219,11 @@ pipeline {
 
                 stage('Frontend Image') {
                     steps {
-                        dir('frontend') {
+                        dir("${env.FRONTEND_DIR}") {
                             sh """
                                 docker build \
+                                  --build-arg VITE_BACKEND_URL=/ \
+                                  --build-arg VITE_ACL_ENABLE=true \
                                   -t ${params.DOCKERHUB_REPO}/pji-frontend:${env.IMAGE_TAG} \
                                   -t ${params.DOCKERHUB_REPO}/pji-frontend:latest \
                                   .
@@ -172,11 +234,26 @@ pipeline {
 
                 stage('RAG Image') {
                     steps {
-                        dir("${env.RAG_SERVICE_DIR}") {
+                        dir("${env.RAG_DIR}") {
                             sh """
                                 docker build \
                                   -t ${params.DOCKERHUB_REPO}/pji-rag-service:${env.IMAGE_TAG} \
                                   -t ${params.DOCKERHUB_REPO}/pji-rag-service:latest \
+                                  .
+                            """
+                        }
+                    }
+                }
+
+                stage('Extract Images Image') {
+                    steps {
+                        dir("${env.EXTRACT_DIR}") {
+                            sh """
+                                docker build \
+                                  -t ${params.DOCKERHUB_REPO}/pji-extract-api:${env.IMAGE_TAG} \
+                                  -t ${params.DOCKERHUB_REPO}/pji-extract-api:latest \
+                                  -t ${params.DOCKERHUB_REPO}/pji-extract-worker:${env.IMAGE_TAG} \
+                                  -t ${params.DOCKERHUB_REPO}/pji-extract-worker:latest \
                                   .
                             """
                         }
@@ -196,6 +273,10 @@ pipeline {
                         docker push "${DOCKERHUB_REPO}/pji-frontend:latest"
                         docker push "${DOCKERHUB_REPO}/pji-rag-service:${IMAGE_TAG}"
                         docker push "${DOCKERHUB_REPO}/pji-rag-service:latest"
+                        docker push "${DOCKERHUB_REPO}/pji-extract-api:${IMAGE_TAG}"
+                        docker push "${DOCKERHUB_REPO}/pji-extract-api:latest"
+                        docker push "${DOCKERHUB_REPO}/pji-extract-worker:${IMAGE_TAG}"
+                        docker push "${DOCKERHUB_REPO}/pji-extract-worker:latest"
                         docker logout
                     '''
                 }
@@ -216,7 +297,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to Production') {
+        stage('Deploy') {
             when {
                 allOf {
                     expression { return params.DEPLOY }
@@ -224,23 +305,33 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    if (!params.DEPLOY_HOST?.trim()) {
-                        error('DEPLOY_HOST must be provided when DEPLOY=true')
-                    }
-                }
-                sshagent(credentials: ['deploy-server-ssh-key']) {
-                    sh '''
-                        ssh -o StrictHostKeyChecking=no "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${DEPLOY_PATH}/docker'"
-                        scp -o StrictHostKeyChecking=no docker-compose.yml Caddyfile "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
-                        scp -o StrictHostKeyChecking=no -r docker/* "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/docker/"
-                        ssh -o StrictHostKeyChecking=no "${DEPLOY_USER}@${DEPLOY_HOST}" "
-                          cd '${DEPLOY_PATH}' && \
-                          DOCKERHUB_REPO='${DOCKERHUB_REPO}' IMAGE_TAG='${IMAGE_TAG}' docker compose pull pji-backend pji-frontend pji-rag-service caddy && \
-                          DOCKERHUB_REPO='${DOCKERHUB_REPO}' IMAGE_TAG='${IMAGE_TAG}' docker compose up -d --remove-orphans caddy pji-backend pji-frontend pji-rag-service
-                        "
-                    '''
-                }
+                sh '''
+                    set -eu
+                    test -d "${DEPLOY_PATH}" || { echo "DEPLOY_PATH ${DEPLOY_PATH} does not exist"; exit 1; }
+                    test -f "${DEPLOY_PATH}/.env" || { echo "${DEPLOY_PATH}/.env is missing — create it manually before first deploy"; exit 1; }
+
+                    mkdir -p "${DEPLOY_PATH}/docker/signoz"
+                    # Production uses a tunnel-mode Caddyfile (HTTP-only on :80, no Let's Encrypt).
+                    # NOTE: Infras_Devops content lives at the workspace root after `checkout scm`,
+                    # so paths are NOT prefixed with Infras_Devops/.
+                    cp Caddyfile.prod   "${DEPLOY_PATH}/Caddyfile"
+                    cp docker/docker-compose.yml "${DEPLOY_PATH}/docker-compose.yml"
+                    cp -r docker/signoz/. "${DEPLOY_PATH}/docker/signoz/"
+
+                    # Bind mount Caddyfile on the server (no Docker Desktop fileshare cache there).
+                    # The source compose uses an external `pji_caddy_config` volume as a Docker Desktop workaround.
+                    sed -i 's|pji_caddy_config:/etc/caddy:ro|./Caddyfile:/etc/caddy/Caddyfile:ro|' "${DEPLOY_PATH}/docker-compose.yml"
+                    sed -i '/^  pji_caddy_config:$/,/^    external: true$/d' "${DEPLOY_PATH}/docker-compose.yml"
+
+                    cd "${DEPLOY_PATH}"
+                    DOCKERHUB_REPO="${DOCKERHUB_REPO}" IMAGE_TAG="${IMAGE_TAG}" \
+                      docker compose pull pji-backend pji-frontend pji-rag-service pji-extract-api pji-extract-worker caddy
+                    DOCKERHUB_REPO="${DOCKERHUB_REPO}" IMAGE_TAG="${IMAGE_TAG}" \
+                      docker compose up -d --remove-orphans \
+                        postgres redis rabbitmq minio \
+                        pji-backend pji-rag-service pji-extract-api pji-extract-worker \
+                        pji-frontend caddy
+                '''
             }
         }
 
@@ -252,30 +343,27 @@ pipeline {
                 }
             }
             steps {
-                sshagent(credentials: ['deploy-server-ssh-key']) {
-                    sh '''
-                        ssh -o StrictHostKeyChecking=no "${DEPLOY_USER}@${DEPLOY_HOST}" '
-                          set -eu
-                          for container in pji-backend pji-frontend pji-rag-service pji-caddy; do
-                            tries=0
-                            while [ "$tries" -lt 30 ]; do
-                              status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$container" 2>/dev/null || true)"
-                              if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
-                                break
-                              fi
-                              tries=$((tries + 1))
-                              sleep 5
-                            done
-                            status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$container" 2>/dev/null || true)"
-                            if [ "$status" != "healthy" ] && [ "$status" != "running" ]; then
-                              echo "Container $container is not healthy: $status"
-                              exit 1
-                            fi
-                          done
-                          curl -fsS http://localhost >/dev/null
-                        '
-                    '''
-                }
+                sh '''
+                    set -eu
+                    for container in pji-backend pji-frontend pji-rag-service pji-caddy; do
+                      tries=0
+                      while [ "$tries" -lt 30 ]; do
+                        status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+                        if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+                          break
+                        fi
+                        tries=$((tries + 1))
+                        sleep 5
+                      done
+                      status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+                      if [ "$status" != "healthy" ] && [ "$status" != "running" ]; then
+                        echo "Container $container is not healthy: $status"
+                        docker logs --tail 30 "$container" || true
+                        exit 1
+                      fi
+                    done
+                    curl -fsS http://localhost/ >/dev/null
+                '''
             }
         }
     }
@@ -286,6 +374,8 @@ pipeline {
                 docker image rm "${DOCKERHUB_REPO}/pji-backend:${IMAGE_TAG}" 2>/dev/null || true
                 docker image rm "${DOCKERHUB_REPO}/pji-frontend:${IMAGE_TAG}" 2>/dev/null || true
                 docker image rm "${DOCKERHUB_REPO}/pji-rag-service:${IMAGE_TAG}" 2>/dev/null || true
+                docker image rm "${DOCKERHUB_REPO}/pji-extract-api:${IMAGE_TAG}" 2>/dev/null || true
+                docker image rm "${DOCKERHUB_REPO}/pji-extract-worker:${IMAGE_TAG}" 2>/dev/null || true
             '''
             cleanWs()
         }

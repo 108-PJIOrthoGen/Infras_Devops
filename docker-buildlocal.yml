@@ -140,8 +140,13 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin2026
+      BASE_DIR: /app
+      UPLOAD_DIR: /data/uploads
+      OUTPUTS_DIR: /data/outputs
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: extract-api
+    volumes:
+      - extract_data:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -163,8 +168,13 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin2026
+      BASE_DIR: /app
+      UPLOAD_DIR: /data/uploads
+      OUTPUTS_DIR: /data/outputs
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: extract-worker
+    volumes:
+      - extract_data:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -338,6 +348,9 @@ services:
       - query-service
     ports:
       - "127.0.0.1:3301:3301"
+    volumes:
+      # Override broken default (location = /api exact-match) shipped in 0.64.0 image
+      - ./docker/signoz/nginx-default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - pji-network
 
@@ -391,6 +404,7 @@ volumes:
   redis_data:
   minio_data:
   rabbitmq_data:
+  extract_data:
   signoz_zookeeper_data:
   signoz_clickhouse_data:
   signoz_alertmanager_data:
@@ -401,5 +415,5 @@ networks:
     driver: bridge
 
 ## Test tại local
-# docker compose -f docker-buildlocal.yml -p 108pji-advisor up -d
+#   
 # SigNoz UI: http://localhost:3301
