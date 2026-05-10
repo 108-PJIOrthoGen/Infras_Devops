@@ -308,12 +308,16 @@ pipeline {
                     test -f "${DEPLOY_PATH}/.env" || { echo "${DEPLOY_PATH}/.env is missing — create it manually before first deploy"; exit 1; }
 
                     mkdir -p "${DEPLOY_PATH}/docker/signoz"
+                    mkdir -p "${DEPLOY_PATH}/docker/init-db"
                     # Production uses a tunnel-mode Caddyfile (HTTP-only on :80, no Let's Encrypt).
                     # NOTE: Infras_Devops content lives at the workspace root after `checkout scm`,
                     # so paths are NOT prefixed with Infras_Devops/.
                     cp Caddyfile.prod   "${DEPLOY_PATH}/Caddyfile"
                     cp docker/docker-compose.yml "${DEPLOY_PATH}/docker-compose.yml"
                     cp -r docker/signoz/. "${DEPLOY_PATH}/docker/signoz/"
+                    if [ -d docker/init-db ] && [ -n "$(ls -A docker/init-db 2>/dev/null)" ]; then
+                      cp -r docker/init-db/. "${DEPLOY_PATH}/docker/init-db/"
+                    fi
 
                     # Bind mount Caddyfile on the server (no Docker Desktop fileshare cache there).
                     # The source compose uses an external `pji_caddy_config` volume as a Docker Desktop workaround.
