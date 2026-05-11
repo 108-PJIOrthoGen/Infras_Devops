@@ -362,7 +362,24 @@ pipeline {
                         exit 1
                       fi
                     done
-                    curl -fsS http://localhost/ >/dev/null
+                    # Retry the public-facing curl — Caddy may briefly 5xx right after startup
+                    # before its first upstream probe completes.
+                    success=0
+                    for i in $(seq 1 12); do
+                      code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ || true)
+                      if [ "$code" = "200" ] || [ "$code" = "304" ]; then
+                        success=1
+                        echo "Caddy returned $code after $i attempt(s)"
+                        break
+                      fi
+                      echo "[$i/12] caddy returned $code, retrying in 5s..."
+                      sleep 5
+                    done
+                    if [ "$success" != "1" ]; then
+                      echo "Caddy never returned 200 — last code: $code"
+                      docker logs --tail 30 pji-caddy || true
+                      exit 1
+                    fi
                 '''
             }
         }

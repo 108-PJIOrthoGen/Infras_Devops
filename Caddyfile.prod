@@ -73,12 +73,11 @@
 	}
 
 	# Frontend SPA
+	# No active health check: the container's own healthcheck + depends_on already
+	# enforce ordering. Active probes added a race where Caddy returns 503 right
+	# after startup, before its first probe lands.
 	handle {
-		reverse_proxy pji-frontend:3000 {
-			health_uri      /healthz
-			health_interval 30s
-			health_timeout  5s
-		}
+		reverse_proxy pji-frontend:3000
 	}
 
 	encode {

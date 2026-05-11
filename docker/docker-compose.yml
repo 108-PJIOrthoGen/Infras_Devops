@@ -115,9 +115,13 @@ services:
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ password required}
 
       # MinIO (binds to integration.minio.* in application.yaml)
+      # INTEGRATION_MINIO_URL = internal endpoint backend uses for put/get/delete (Docker network)
+      # INTEGRATION_MINIO_PUBLIC_URL = public endpoint baked into presigned URLs (browsers fetch this)
       INTEGRATION_MINIO_URL: ${INTEGRATION_MINIO_URL:-http://minio:9000}
+      INTEGRATION_MINIO_PUBLIC_URL: ${INTEGRATION_MINIO_PUBLIC_URL:-${INTEGRATION_MINIO_URL:-http://minio:9000}}
       INTEGRATION_MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MinIO access key required}
       INTEGRATION_MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MinIO secret key required}
+      INTEGRATION_MINIO_PRESIGNED_EXPIRY_MINUTES: ${INTEGRATION_MINIO_PRESIGNED_EXPIRY_MINUTES:-60}
       MINIO_BUCKET: ${MINIO_BUCKET:-pji-documents}
 
       # Internal AI service URL
