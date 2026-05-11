@@ -86,3 +86,19 @@
 		zstd
 	}
 }
+
+# MinIO S3 API — public endpoint for presigned URLs from the browser
+# Cloudflare terminates TLS at the edge, so Caddy speaks plain HTTP on :80.
+# Browsers see https://minio.108pog.site (Cloudflare upgraded), Caddy receives HTTP.
+http://minio.108pog.site:80 {
+	reverse_proxy minio:9000 {
+		transport http {
+			dial_timeout            5s
+			response_header_timeout 60s
+			read_timeout            300s
+		}
+		# Preserve the Host header MinIO signed against — critical for AWS sig v4
+		header_up Host {host}
+	}
+}
+

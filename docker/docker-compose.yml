@@ -133,8 +133,9 @@ services:
       MAIL_SMTP_STARTTLS_ENABLE: ${MAIL_SMTP_STARTTLS_ENABLE:-true}
       PASSWORD_RECOVERY_MAIL_FROM: ${PASSWORD_RECOVERY_MAIL_FROM:?Password recovery sender email required}
 
-      # OpenTelemetry
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      # OpenTelemetry — Spring Micrometer OTLP exporter uses HTTP (port 4318), not gRPC (4317).
+      # The /v1/traces path suffix is required by Spring's management.otlp.tracing.endpoint.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
       OTEL_SERVICE_NAME: pji-backend
       OTEL_RESOURCE_ATTRIBUTES: "service.version=${IMAGE_TAG:-latest},deployment.environment=${SPRING_PROFILES_ACTIVE:-prod}"
 
