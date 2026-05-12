@@ -280,17 +280,32 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
+                        set -eu
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push "${DOCKERHUB_REPO}/pji-backend:${IMAGE_TAG}"
-                        docker push "${DOCKERHUB_REPO}/pji-backend:latest"
-                        docker push "${DOCKERHUB_REPO}/pji-frontend:${IMAGE_TAG}"
-                        docker push "${DOCKERHUB_REPO}/pji-frontend:latest"
-                        docker push "${DOCKERHUB_REPO}/pji-rag-service:${IMAGE_TAG}"
-                        docker push "${DOCKERHUB_REPO}/pji-rag-service:latest"
-                        docker push "${DOCKERHUB_REPO}/pji-extract-api:${IMAGE_TAG}"
-                        docker push "${DOCKERHUB_REPO}/pji-extract-api:latest"
-                        docker push "${DOCKERHUB_REPO}/pji-extract-worker:${IMAGE_TAG}"
-                        docker push "${DOCKERHUB_REPO}/pji-extract-worker:latest"
+
+                        # Push with retry — slow networks sometimes need multiple attempts to
+                        # complete the upload of large Python wheels (torch, transformers, etc.).
+                        # Sequential pushes avoid saturating bandwidth with parallel uploads.
+                        push_with_retry() {
+                          local image="$1"
+                          local attempts=0
+                          local max=3
+                          until docker push "$image"; do
+                            attempts=$((attempts + 1))
+                            if [ "$attempts" -ge "$max" ]; then
+                              echo "FAILED to push $image after $max attempts"
+                              return 1
+                            fi
+                            echo "Push of $image failed, retrying in 10s ($attempts/$max)..."
+                            sleep 10
+                          done
+                        }
+
+                        for repo in pji-backend pji-frontend pji-rag-service pji-extract-api pji-extract-worker; do
+                          push_with_retry "${DOCKERHUB_REPO}/${repo}:${IMAGE_TAG}"
+                          push_with_retry "${DOCKERHUB_REPO}/${repo}:latest"
+                        done
+
                         docker logout
                     '''
                 }
