@@ -53,6 +53,8 @@ services:
       - caddy_config:/config
     networks:
       - frontend-net
+      - backend-net      # so Caddy can reverse_proxy minio:9000 for the minio.108pog.site site
+      - monitoring-net   # so Caddy can reverse_proxy signoz-frontend:3301 for signoz.108pog.site
     depends_on:
       pji-frontend:
         condition: service_healthy

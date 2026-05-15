@@ -86,6 +86,20 @@
 	}
 }
 
+# SigNoz observability UI — Caddy proxies to the signoz-frontend container
+# (which binds 127.0.0.1:3301 only, not reachable from the LAN IP cloudflared uses).
+# Browsers see https://signoz.108pog.site (Cloudflare upgraded), Caddy receives HTTP.
+http://signoz.108pog.site:80 {
+	reverse_proxy signoz-frontend:3301 {
+		transport http {
+			dial_timeout            5s
+			response_header_timeout 60s
+			read_timeout            300s
+		}
+		header_up Host {host}
+	}
+}
+
 # MinIO S3 API — public endpoint for presigned URLs from the browser
 # Cloudflare terminates TLS at the edge, so Caddy speaks plain HTTP on :80.
 # Browsers see https://minio.108pog.site (Cloudflare upgraded), Caddy receives HTTP.
